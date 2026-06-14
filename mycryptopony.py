@@ -1,0 +1,524 @@
+#!/usr/bin/env python3
+"""
+MyCryptoPony - a terminal UI for age, GPG, and croc.
+Requires: textual, pexpect, age, gnupg, croc
+"""
+
+import os
+import subprocess
+import asyncio
+import shlex
+import re
+from pathlib import Path
+from typing import Optional, List
+
+import pexpect
+from textual import on
+from textual.app import App, ComposeResult
+from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
+from textual.widgets import Header, Footer, Button, Static, Input, Label, DirectoryTree
+from textual.screen import Screen, ModalScreen
+
+# ----------------------------
+# Base form screen
+# ----------------------------
+class BaseFormScreen(Screen):
+    """Abstract screen with input fields and action buttons."""
+    def compose(self):
+        yield Header()
+        yield Container(
+            ScrollableContainer(
+                self.create_form(),
+                id="form_container"
+            ),
+            Horizontal(
+                Button("Submit", variant="primary", id="submit"),
+                Button("Back", variant="default", id="back"),
+                id="buttons"
+            ),
+            id="screen_container"
+        )
+        yield Footer()
+
+    def create_form(self):
+        return Label("Form")
+
+    def _set_path(self, path: Optional[str], widget_id: str):
+        """Generic callback used by FilePickerModal to set a path value."""
+        if path:
+            self.query_one(f"#{widget_id}").value = path
+
+    @on(Button.Pressed, "#back")
+    def go_back(self):
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#submit")
+    async def submit(self):
+        await self.on_submit()
+
+    async def on_submit(self):
+        pass
+
+# ----------------------------
+# File / folder picker modal
+# ----------------------------
+class FilePickerModal(ModalScreen):
+    """Modal dialog with a directory tree for picking a file or folder."""
+    def __init__(self, directory_mode: bool = False):
+        self.directory_mode = directory_mode
+        super().__init__()
+
+    def compose(self):
+        prompt = "Select folder:" if self.directory_mode else "Select file:"
+        yield Container(
+            Label(prompt),
+            DirectoryTree(str(Path.home()), id="picker_tree"),
+            Button("Cancel", variant="default", id="cancel"),
+            id="modal_dialog"
+        )
+
+    @on(DirectoryTree.FileSelected)
+    def select_file(self, event: DirectoryTree.FileSelected):
+        self.dismiss(str(event.path))
+
+    @on(DirectoryTree.DirectorySelected)
+    def select_directory(self, event: DirectoryTree.DirectorySelected):
+        if self.directory_mode:
+            self.dismiss(str(event.path))
+
+    @on(Button.Pressed, "#cancel")
+    def cancel(self):
+        self.dismiss(None)
+
+# ----------------------------
+# External command helpers
+# ----------------------------
+
+def run_cmd(cmd: List[str], input_data: Optional[bytes] = None) -> tuple[int, str, str]:
+    """Run a command and return (returncode, stdout, stderr)."""
+    try:
+        proc = subprocess.run(cmd, input=input_data, capture_output=True, check=False)
+        return proc.returncode, proc.stdout.decode('utf-8', errors='replace'), proc.stderr.decode('utf-8', errors='replace')
+    except FileNotFoundError:
+        return 1, "", f"Command not found: {cmd[0]}\nPlease install it and try again."
+
+def age_encrypt_file(input_path: Path, output_path: Optional[Path] = None, passphrase: Optional[str] = None, recipient: Optional[str] = None) -> tuple[bool, str]:
+    if output_path is None:
+        output_path = input_path.with_suffix(input_path.suffix + ".age")
+    
+    if passphrase:
+        # The -p flag tells age to prompt for a passphrase interactively.
+        cmd = f"age --encrypt -p --output {shlex.quote(str(output_path))} {shlex.quote(str(input_path))}"
+        try:
+            child = pexpect.spawn(cmd)
+            child.expect("Enter passphrase")
+            child.sendline(passphrase)
+            child.expect("Confirm passphrase")
+            child.sendline(passphrase)
+            child.expect(pexpect.EOF)
+            
+            if child.exitstatus == 0:
+                return True, f"Encrypted: {output_path}"
+            else:
+                return False, child.before.decode('utf-8', errors='replace')
+        except pexpect.ExceptionPexpect as e:
+            return False, f"Interaction error with age: {e}"
+        except FileNotFoundError:
+            return False, "Command 'age' not found. Install via: brew install age"
+            
+    elif recipient:
+        cmd = ["age", "--encrypt", "--output", str(output_path), "--recipient", recipient, str(input_path)]
+        code, out, err = run_cmd(cmd)
+        if code == 0:
+            return True, f"Encrypted: {output_path}"
+        else:
+            return False, err
+    else:
+        return False, "Neither passphrase nor recipient specified"
+
+def age_decrypt_file(input_path: Path, output_path: Optional[Path] = None, passphrase: Optional[str] = None, identity: Optional[Path] = None) -> tuple[bool, str]:
+    if output_path is None:
+        output_path = input_path.with_suffix("") if input_path.suffix == ".age" else input_path.with_suffix(input_path.suffix + ".dec")
+    
+    if passphrase:
+        # No -p flag here: age auto-detects passphrase-encrypted files from the header.
+        cmd = f"age --decrypt --output {shlex.quote(str(output_path))} {shlex.quote(str(input_path))}"
+        try:
+            child = pexpect.spawn(cmd)
+            child.expect("Enter passphrase")
+            child.sendline(passphrase)
+            child.expect(pexpect.EOF)
+            
+            if child.exitstatus == 0:
+                return True, f"Decrypted: {output_path}"
+            else:
+                return False, child.before.decode('utf-8', errors='replace')
+        except pexpect.ExceptionPexpect as e:
+            return False, f"Interaction error with age: {e}"
+        except FileNotFoundError:
+            return False, "Command 'age' not found. Install via: brew install age"
+            
+    elif identity:
+        cmd = ["age", "--decrypt", "--output", str(output_path), "--identity", str(identity), str(input_path)]
+        code, out, err = run_cmd(cmd)
+        if code == 0:
+            return True, f"Decrypted: {output_path}"
+        else:
+            return False, err
+    else:
+        return False, "Passphrase or identity file required"
+
+def gpg_sign_file(input_path: Path, output_path: Optional[Path] = None, key_id: Optional[str] = None) -> tuple[bool, str]:
+    if output_path is None:
+        output_path = input_path.with_suffix(input_path.suffix + ".asc")
+    # --yes prevents interactive overwrite prompts.
+    cmd = ["gpg", "--detach-sign", "--armor", "--yes", "--output", str(output_path)]
+    if key_id:
+        cmd.extend(["--local-user", key_id])
+    cmd.append(str(input_path))
+    
+    code, out, err = run_cmd(cmd)
+    if code == 0:
+        return True, f"Signature created: {output_path}"
+    else:
+        return False, err
+
+def gpg_verify_file(sig_path: Path, data_path: Path) -> tuple[bool, str]:
+    cmd = ["gpg", "--verify", str(sig_path), str(data_path)]
+    code, out, err = run_cmd(cmd)
+    if code == 0:
+        return True, "Signature is valid"
+    else:
+        return False, err
+
+def croc_send(path: Path) -> tuple[bool, str]:
+    cmd = ["croc", "--yes", "send", str(path)]
+    code, out, err = run_cmd(cmd)
+    combined = out + err
+    if code == 0:
+        # Extract the human-readable code phrase from croc's output.
+        match = re.search(r'Code is:\s*(\S+)', combined)
+        if match:
+            code_phrase = match.group(1)
+            return True, f"Receive code: {code_phrase}"
+        else:
+            return True, "Sent (code not found in output)"
+    else:
+        return False, err
+
+def croc_receive(code_str: str) -> tuple[bool, str]:
+    # --yes --overwrite prevents interactive prompts.
+    cmd = ["croc", "--yes", "--overwrite", code_str]
+    code_r, out, err = run_cmd(cmd)
+    if code_r == 0:
+        return True, "Received successfully"
+    else:
+        return False, err
+
+# ----------------------------
+# Concrete screens
+# ----------------------------
+class EncryptScreen(BaseFormScreen):
+    def create_form(self):
+        return Vertical(
+            Label("📁 Age Encryption", classes="subtitle"),
+            Horizontal(
+                Input(placeholder="File path", id="input_path", classes="narrow-input"),
+                Button("Browse", variant="default", id="browse_input_path"),
+            ),
+            Input(placeholder="Passphrase (optional)", id="passphrase", password=True),
+            Input(placeholder="Public key (if no passphrase)", id="recipient"),
+            Horizontal(
+                Input(placeholder="Output file path (optional)", id="output_path", classes="narrow-input"),
+                Button("Browse", variant="default", id="browse_output_path"),
+            ),
+        )
+
+    @on(Button.Pressed, "#browse_input_path")
+    def browse_input(self):
+        self.app.push_screen(FilePickerModal(directory_mode=False), callback=lambda p: self._set_path(p, "input_path"))
+
+    @on(Button.Pressed, "#browse_output_path")
+    def browse_output(self):
+        self.app.push_screen(FilePickerModal(directory_mode=False), callback=lambda p: self._set_path(p, "output_path"))
+
+    async def on_submit(self):
+        path_str = self.query_one("#input_path").value
+        passphrase = self.query_one("#passphrase").value
+        recipient = self.query_one("#recipient").value
+        out_str = self.query_one("#output_path").value
+        if not path_str:
+            self.notify("Please specify a file", severity="error")
+            return
+        in_path = Path(path_str).expanduser()
+        if not in_path.is_file():
+            self.notify("File not found", severity="error")
+            return
+        out_path = Path(out_str).expanduser() if out_str else None
+        
+        if passphrase:
+            ok, msg = await asyncio.to_thread(age_encrypt_file, in_path, out_path, passphrase=passphrase)
+        elif recipient:
+            ok, msg = await asyncio.to_thread(age_encrypt_file, in_path, out_path, recipient=recipient)
+        else:
+            ok, msg = False, "Please specify a passphrase or public key"
+            
+        self.notify(msg, severity="success" if ok else "error")
+        if ok:
+            self.app.pop_screen()
+
+class DecryptScreen(BaseFormScreen):
+    def create_form(self):
+        return Vertical(
+            Label("🔓 Age Decryption", classes="subtitle"),
+            Horizontal(
+                Input(placeholder="Encrypted file path (.age)", id="input_path", classes="narrow-input"),
+                Button("Browse", variant="default", id="browse_input_path"),
+            ),
+            Input(placeholder="Passphrase (optional)", id="passphrase", password=True),
+            Horizontal(
+                Input(placeholder="Identity file path", id="identity", classes="narrow-input"),
+                Button("Browse", variant="default", id="browse_identity"),
+            ),
+            Horizontal(
+                Input(placeholder="Output file path (optional)", id="output_path", classes="narrow-input"),
+                Button("Browse", variant="default", id="browse_output_path"),
+            ),
+        )
+
+    @on(Button.Pressed, "#browse_input_path")
+    def browse_input(self):
+        self.app.push_screen(FilePickerModal(directory_mode=False), callback=lambda p: self._set_path(p, "input_path"))
+    
+    @on(Button.Pressed, "#browse_identity")
+    def browse_identity(self):
+        self.app.push_screen(FilePickerModal(directory_mode=False), callback=lambda p: self._set_path(p, "identity"))
+    
+    @on(Button.Pressed, "#browse_output_path")
+    def browse_output(self):
+        self.app.push_screen(FilePickerModal(directory_mode=False), callback=lambda p: self._set_path(p, "output_path"))
+
+    async def on_submit(self):
+        path_str = self.query_one("#input_path").value
+        passphrase = self.query_one("#passphrase").value
+        identity_str = self.query_one("#identity").value
+        out_str = self.query_one("#output_path").value
+        if not path_str:
+            self.notify("Please specify a file", severity="error")
+            return
+        in_path = Path(path_str).expanduser()
+        if not in_path.is_file():
+            self.notify("File not found", severity="error")
+            return
+        out_path = Path(out_str).expanduser() if out_str else None
+        
+        if passphrase:
+            ok, msg = await asyncio.to_thread(age_decrypt_file, in_path, out_path, passphrase=passphrase)
+        elif identity_str:
+            id_path = Path(identity_str).expanduser()
+            if not id_path.is_file():
+                self.notify("Identity file not found", severity="error")
+                return
+            ok, msg = await asyncio.to_thread(age_decrypt_file, in_path, out_path, identity=id_path)
+        else:
+            ok, msg = False, "Please specify a passphrase or identity file"
+            
+        self.notify(msg, severity="success" if ok else "error")
+        if ok:
+            self.app.pop_screen()
+
+class SignScreen(BaseFormScreen):
+    def create_form(self):
+        return Vertical(
+            Label("✍️ GPG File Signing", classes="subtitle"),
+            Horizontal(
+                Input(placeholder="File to sign path", id="input_path", classes="narrow-input"),
+                Button("Browse", variant="default", id="browse_input_path"),
+            ),
+            Input(placeholder="Key ID (optional)", id="key_id"),
+        )
+
+    @on(Button.Pressed, "#browse_input_path")
+    def browse_input(self):
+        self.app.push_screen(FilePickerModal(directory_mode=False), callback=lambda p: self._set_path(p, "input_path"))
+
+    async def on_submit(self):
+        path_str = self.query_one("#input_path").value
+        key_id = self.query_one("#key_id").value or None
+        if not path_str:
+            self.notify("Please specify a file", severity="error")
+            return
+        in_path = Path(path_str).expanduser()
+        if not in_path.is_file():
+            self.notify("File not found", severity="error")
+            return
+        ok, msg = await asyncio.to_thread(gpg_sign_file, in_path, key_id=key_id)
+        self.notify(msg, severity="success" if ok else "error")
+        if ok:
+            self.app.pop_screen()
+
+class VerifyScreen(BaseFormScreen):
+    def create_form(self):
+        return Vertical(
+            Label("✅ GPG Signature Verification", classes="subtitle"),
+            Horizontal(
+                Input(placeholder="Signature file path (.asc)", id="sig_path", classes="narrow-input"),
+                Button("Browse", variant="default", id="browse_sig"),
+            ),
+            Horizontal(
+                Input(placeholder="Original file path", id="data_path", classes="narrow-input"),
+                Button("Browse", variant="default", id="browse_data"),
+            ),
+        )
+
+    @on(Button.Pressed, "#browse_sig")
+    def browse_sig(self):
+        self.app.push_screen(FilePickerModal(directory_mode=False), callback=lambda p: self._set_path(p, "sig_path"))
+    
+    @on(Button.Pressed, "#browse_data")
+    def browse_data(self):
+        self.app.push_screen(FilePickerModal(directory_mode=False), callback=lambda p: self._set_path(p, "data_path"))
+
+    async def on_submit(self):
+        sig_str = self.query_one("#sig_path").value
+        data_str = self.query_one("#data_path").value
+        if not sig_str or not data_str:
+            self.notify("Please specify both files", severity="error")
+            return
+        sig_path = Path(sig_str).expanduser()
+        data_path = Path(data_str).expanduser()
+        if not sig_path.is_file() or not data_path.is_file():
+            self.notify("Files not found", severity="error")
+            return
+        ok, msg = await asyncio.to_thread(gpg_verify_file, sig_path, data_path)
+        self.notify(msg, severity="success" if ok else "error")
+        if ok:
+            self.app.pop_screen()
+
+class SendScreen(BaseFormScreen):
+    def create_form(self):
+        return Vertical(
+            Label("📤 Send via croc", classes="subtitle"),
+            Horizontal(
+                Input(placeholder="File or folder path", id="path", classes="narrow-input"),
+                Button("Browse", variant="default", id="browse_path"),
+            ),
+        )
+
+    @on(Button.Pressed, "#browse_path")
+    def browse(self):
+        self.app.push_screen(FilePickerModal(directory_mode=True), callback=lambda p: self._set_path(p, "path"))
+
+    async def on_submit(self):
+        path_str = self.query_one("#path").value
+        if not path_str:
+            self.notify("Please specify a path", severity="error")
+            return
+        path = Path(path_str).expanduser()
+        if not path.exists():
+            self.notify("Path does not exist", severity="error")
+            return
+        ok, msg = await asyncio.to_thread(croc_send, path)
+        self.notify(msg, severity="success" if ok else "error", timeout=10)
+        if ok:
+            self.app.pop_screen()
+
+class ReceiveScreen(BaseFormScreen):
+    def create_form(self):
+        return Vertical(
+            Label("📥 Receive via croc", classes="subtitle"),
+            Input(placeholder="Code (e.g., 'puma-moral-builder')", id="code"),
+        )
+
+    async def on_submit(self):
+        code = self.query_one("#code").value.strip()
+        if not code:
+            self.notify("Please enter a code", severity="error")
+            return
+        ok, msg = await asyncio.to_thread(croc_receive, code)
+        self.notify(msg, severity="success" if ok else "error")
+        if ok:
+            self.app.pop_screen()
+
+# ----------------------------
+# Main screen
+# ----------------------------
+class MainScreen(Screen):
+    def compose(self):
+        yield Header()
+        yield Container(
+            Label("🦄 MyCryptoPony", id="title"),
+            Button("📁 Encrypt file (age)", variant="primary", id="btn_encrypt"),
+            Button("🔓 Decrypt file (age)", variant="primary", id="btn_decrypt"),
+            Button("✍️ Sign file (GPG)", variant="primary", id="btn_sign"),
+            Button("✅ Verify signature (GPG)", variant="primary", id="btn_verify"),
+            Button("📤 Send via croc", variant="success", id="btn_send"),
+            Button("📥 Receive via croc", variant="success", id="btn_receive"),
+            Button("❌ Exit", variant="error", id="btn_exit"),
+            id="main_menu",
+        )
+        yield Footer()
+
+    @on(Button.Pressed, "#btn_encrypt")
+    def action_encrypt(self):
+        self.app.push_screen(EncryptScreen())
+    @on(Button.Pressed, "#btn_decrypt")
+    def action_decrypt(self):
+        self.app.push_screen(DecryptScreen())
+    @on(Button.Pressed, "#btn_sign")
+    def action_sign(self):
+        self.app.push_screen(SignScreen())
+    @on(Button.Pressed, "#btn_verify")
+    def action_verify(self):
+        self.app.push_screen(VerifyScreen())
+    @on(Button.Pressed, "#btn_send")
+    def action_send(self):
+        self.app.push_screen(SendScreen())
+    @on(Button.Pressed, "#btn_receive")
+    def action_receive(self):
+        self.app.push_screen(ReceiveScreen())
+    @on(Button.Pressed, "#btn_exit")
+    def action_exit(self):
+        self.app.exit()
+
+# ----------------------------
+# Application
+# ----------------------------
+class MyCryptoPonyApp(App):
+    CSS = """
+    /* Subtle, clean theme suitable for the project name */
+    Screen {
+        background: $surface;
+    }
+    #title {
+        color: $primary;
+        text-style: bold;
+        margin: 1;
+        width: 100%;
+        text-align: center;
+    }
+    .subtitle {
+        color: $accent;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #modal_dialog {
+        background: $surface;
+        border: heavy $primary;
+        padding: 1 2;
+        width: 60%;
+        height: 80%;
+    }
+    .narrow-input {
+        width: 40;
+    }
+    """
+    
+    SCREENS = {
+        "main": MainScreen,
+    }
+    def on_mount(self):
+        self.push_screen("main")
+
+if __name__ == "__main__":
+    MyCryptoPonyApp().run()
