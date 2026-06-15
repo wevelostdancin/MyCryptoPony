@@ -77,7 +77,7 @@ age-keygen -y key.txt          # prints the matching public key
 
 Use the public key as the recipient when encrypting, and the `key.txt` file as the identity when decrypting.
 
-### Generating a minisign keypair (for for signing files)
+### Generating a minisign keypair (for signing files)
 
 If you plan to use the signing features, generate a keypair once. The app defaults to `~/.minisign/`:
 
