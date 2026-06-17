@@ -90,6 +90,15 @@ class FilePickerModal(ModalScreen):
 # ----------------------------
 class PathInput(Horizontal):
     """Composite widget: Input + Browse button that opens FilePickerModal."""
+    
+    DEFAULT_CSS = """
+    PathInput {
+        height: auto;
+    }
+    PathInput Input {
+        width: 40;
+    }
+    """
 
     def __init__(
         self,
@@ -97,28 +106,26 @@ class PathInput(Horizontal):
         input_id: str,
         placeholder: str = "",
         directory_mode: bool = False,
-        classes: str = "narrow-input",
     ):
         super().__init__()
         self._input_id = input_id
         self._placeholder = placeholder
         self._directory_mode = directory_mode
-        self._classes = classes
 
     def compose(self) -> ComposeResult:
         yield Input(
             placeholder=self._placeholder,
             id=self._input_id,
-            classes=self._classes,
         )
         yield Button("Browse", variant="default", id=f"browse_{self._input_id}")
 
     @on(Button.Pressed)
     def _on_browse(self, event: Button.Pressed) -> None:
-        self.app.push_screen(
-            FilePickerModal(directory_mode=self._directory_mode),
-            callback=self._set_path,
-        )
+        if event.button.id == f"browse_{self._input_id}":
+            self.app.push_screen(
+                FilePickerModal(directory_mode=self._directory_mode),
+                callback=self._set_path,
+            )
 
     def _set_path(self, path: Optional[str]) -> None:
         if path:
@@ -824,9 +831,6 @@ class MyCryptoPonyApp(App):
         padding: 1 2;
         width: 60%;
         height: 80%;
-    }
-    .narrow-input {
-        width: 40;
     }
     """
 
