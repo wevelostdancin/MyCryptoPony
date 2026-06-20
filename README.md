@@ -1,4 +1,4 @@
-# 🦄 MyCryptoPony
+# MyCryptoPony
 
 <p align="center">
   <img src="logo/logo.PNG" alt="Логотип MyCryptoPony" width="200">
