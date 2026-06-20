@@ -1,6 +1,6 @@
 # 🦄 MyCryptoPony
 
-(images/logo.png)
+![MyCryptoPony Logo](logo/logo.PNG)
 
 A friendly terminal UI (TUI) that wraps five powerful cryptography and privacy CLI tools — [`age`](https://github.com/FiloSottile/age), [`minisign`](https://jedisct1.github.io/minisign/), [`mat2`](https://0xacab.org/jvoisin/mat2), [`rhash`](https://github.com/rhash/RHash), and [`croc`](https://github.com/schollz/croc) — into a single, easy-to-use menu.
 
