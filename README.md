@@ -1,7 +1,7 @@
 # MyCryptoPony
 
 <p align="center">
-  <img src="logo/logo.PNG" alt="Логотип MyCryptoPony" width="200">
+  <img src="logo/logo.PNG" alt="MyCryptoPony Logo" width="200">
 </p>
 
 A friendly terminal UI (TUI) that wraps five powerful cryptography and privacy CLI tools — [`age`](https://github.com/FiloSottile/age), [`minisign`](https://jedisct1.github.io/minisign/), [`mat2`](https://0xacab.org/jvoisin/mat2), [`rhash`](https://github.com/rhash/RHash), and [`croc`](https://github.com/schollz/croc) — into a single, easy-to-use menu.
@@ -30,7 +30,7 @@ brew install age minisign mat2 rhash croc
 ### Python dependencies
 
 ```bash
-pip install textual pexpect
+pip install -e ".[dev]"
 ```
 
 Python **3.10+** is required.
@@ -40,7 +40,7 @@ Python **3.10+** is required.
 ```bash
 git clone https://github.com/wevelostdancin/MyCryptoPony.git
 cd MyCryptoPony
-pip install -r requirements.txt
+pip install -e ".[dev]"
 chmod +x mycryptopony.py
 ```
 
@@ -53,17 +53,32 @@ chmod +x mycryptopony.py
 You will see the main menu:
 
 ```
-🦄 MyCryptoPony
-[📁 Encrypt file (age)]
-[🔓 Decrypt file (age)]
-[✍️ Sign file (minisign)]
-[✅ Verify signature (minisign)]
-[🪄 Clean metadata (mat2)]
-[🔎 Generate hash (rhash)]
-[🔍 Verify hash (rhash)]
-[📤 Send via croc]
-[📥 Receive via croc]
+MyCryptoPony
+Cryptographic Toolkit
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[📁 Encrypt]
+[🔓 Decrypt]
+[✍️ Sign]
+[✅ Verify]
+[🔎 Hash Gen]
+[🔍 Hash Verify]
+[🪄 Clean]
+[📤 Send]
+[ Receive]
 [❌ Exit]
+```
+
+## 🧪 Testing
+
+Run unit tests (no external tools required):
+```bash
+pytest
+```
+Run code quality checks:
+```bash
+ruff check .
+ruff format .
+mypy .
 ```
 
 ### Keyboard shortcuts
@@ -99,16 +114,18 @@ minisign -G
 ```
 MyCryptoPony/
 ├── mycryptopony.py       # Main application
-├── requirements.txt    # Python dependencies
-├── .gitignore          # Git ignore rules (excludes .age, .minisig, etc.)
-└── README.md           # This file
+├── pyproject.toml        # Project configuration and dependencies
+── tests/
+│   └── test_commands.py  # Unit tests
+├── .gitignore            # Git ignore rules (excludes .age, .minisig, etc.)
+└── README.md             # This file
 ```
 
 ## ⚙️ How it works
 
-- Non-blocking Passwords: `age` and `minisign` require interactive password prompts. MyCryptoPony uses `pexpect` in a background thread (`asyncio.to_thread`) to handle this securely without freezing the TUI or leaking passwords to process lists (`ps aux`).
-- Safe Metadata Cleaning: `mat2` is invoked to create a `.cleaned` copy of the file, leaving the original untouched to prevent accidental data loss.
-- Standardized Hashing: `rhash` is used with the `-o` flag to automatically generate standard checksum files (e.g., document.pdf.sha512), which can be immediately used by the "Verify hash" screen or standard CLI tools.
+- Non-blocking Passwords: `age` and `minisign` require interactive password prompts. MyCryptoPony uses `pexpect` with list-based arguments (no shell injection risk) in a background thread (`asyncio.to_thread`) to handle this securely without freezing the TUI or leaking passwords to process lists (`ps aux`). All subprocess calls include a 5-minute timeout to prevent hanging;
+- Safe Metadata Cleaning: `mat2` is invoked to create a `.cleaned` copy of the file, leaving the original untouched to prevent accidental data loss;
+- Standardized Hashing: `rhash` is used with the `-o` flag to automatically generate standard checksum files (e.g., document.pdf.sha512), which can be immediately used by the "Verify hash" screen or standard CLI tools;
 - External Drive Support: The file picker roots at `/`, ensuring you can navigate to `/Volumes/YourUSBDrive` on macOS without workarounds.
 
 ## 🤝 Contributing

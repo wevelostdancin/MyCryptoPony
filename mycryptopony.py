@@ -691,18 +691,23 @@ class MainScreen(Screen[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Container(
-            Label("🦄 MyCryptoPony", id="title"),
-            Button("📁 Encrypt file (age)", variant="primary", id="btn_encrypt"),
-            Button("🔓 Decrypt file (age)", variant="primary", id="btn_decrypt"),
-            Button("✍️ Sign file (minisign)", variant="primary", id="btn_sign"),
-            Button("✅ Verify signature (minisign)", variant="primary", id="btn_verify"),
-            Button("🪄 Clean metadata (mat2)", variant="primary", id="btn_clean"),
-            Button("🔎 Generate hash (rhash)", variant="primary", id="btn_hash_gen"),
-            Button("🔍 Verify hash (rhash)", variant="primary", id="btn_hash_verify"),
-            Button("📤 Send via croc", variant="success", id="btn_send"),
-            Button("📥 Receive via croc", variant="success", id="btn_receive"),
-            Button("❌ Exit", variant="error", id="btn_exit"),
-            id="main_menu",
+            # Простой текстовый заголовок
+            Label("MyCryptoPony", id="title"),
+            Label("Cryptographic Toolkit", id="subtitle"),
+            
+            # Кнопки меню - компактный вертикальный ряд
+            Button("📁 Encrypt", variant="primary", id="btn_encrypt", classes="menu_button"),
+            Button("🔓 Decrypt", variant="primary", id="btn_decrypt", classes="menu_button"),
+            Button("✍️ Sign", variant="primary", id="btn_sign", classes="menu_button"),
+            Button("✅ Verify", variant="primary", id="btn_verify", classes="menu_button"),
+            Button("🔎 Hash Gen", variant="warning", id="btn_hash_gen", classes="menu_button"),
+            Button("🔍 Hash Verify", variant="warning", id="btn_hash_verify", classes="menu_button"),
+            Button("🪄 Clean", variant="primary", id="btn_clean", classes="menu_button"),
+            Button("📤 Send", variant="success", id="btn_send", classes="menu_button"),
+            Button("📥 Receive", variant="success", id="btn_receive", classes="menu_button"),
+            Button("❌ Exit", variant="error", id="btn_exit", classes="menu_button exit_button"),
+            
+            id="main_container",
         )
         yield Footer()
 
@@ -754,22 +759,58 @@ class MyCryptoPonyApp(App[None]):
     Screen {
         background: $surface;
     }
+    
+    /* Главный контейнер - центрирование */
+    #main_container {
+        width: 70%;
+        max-width: 60;
+        align: center top;
+        padding: 0 1;
+        margin-top: 1;
+    }
+    
+    /* Заголовок */
     #title {
         color: $primary;
         text-style: bold;
-        margin: 1;
-        width: 100%;
         text-align: center;
+        width: 100%;
+        margin-bottom: 0;
     }
+    
+    /* Подзаголовок */
+    #subtitle {
+        color: $text-muted;
+        text-align: center;
+        text-style: italic;
+        margin-bottom: 1;
+        width: 100%;
+    }
+    
+    /* Кнопки меню - компактные */
+    .menu_button {
+        width: 100%;
+        margin-bottom: 0;
+        min-height: 2;
+    }
+    
+    /* Кнопка выхода с отступом */
+    .exit_button {
+        margin-top: 1;
+    }
+    
+    /* Остальные стили */
     .subtitle {
         color: $accent;
         text-style: bold;
         margin-bottom: 1;
     }
+    
     .muted {
         color: $text-muted;
         margin-top: 1;
     }
+    
     #modal_dialog {
         background: $surface;
         border: heavy $primary;
