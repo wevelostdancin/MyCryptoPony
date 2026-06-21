@@ -1,2 +1,0 @@
-textual>=0.40.0
-pexpect>=4.8.0
